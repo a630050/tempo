@@ -132,7 +132,7 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.99);
             z-index: 15;
             pointer-events: none;
         }
@@ -176,7 +176,7 @@
             z-index: 5;
             font-size: 14px;
             padding: 15px 20px;
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.99);
             border-radius: 10px;
             max-width: 90%;
             line-height: 1.4;
@@ -886,7 +886,7 @@
                         const distance = this.scrollOffset - clap.x;
                         const maxDistance = trailLength;
                         const alpha = Math.max(0, 1 - (distance / maxDistance));
-                        const size = 20 * (1 - (distance / maxDistance) * 0.5);
+                        const size = 15 * (1 - (distance / maxDistance) * 0.3);
                         
                         ctx.fillStyle = `rgba(255, 100, 100, ${alpha})`;
                         ctx.shadowColor = '#ff6464';
