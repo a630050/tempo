@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>音樂節拍視覺化練習器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            overflow: hidden;
+            height: 100vh;
+        }
+        
+        .container {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .control-panel {
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+            position: relative;
+            z-index: 20;
+        }
+        
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .control-group label {
+            font-size: 14px;
+            font-weight: bold;
+        }
+        
+        input[type="range"] {
+            width: 120px;
+        }
+        
+        select, button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        select:hover, button:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        .bpm-display {
+            font-size: 18px;
+            font-weight: bold;
+            color: #FFD700;
+        }
+        
+        .track-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .metronome-track, .user-track {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            margin: 10px;
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.2);
+        }
+        
+        .track-label {
+            position: absolute;
+            top: 10px;
+            left: 20px;
+            font-weight: bold;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 5px 10px;
+            border-radius: 15px;
+        }
+        
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        
+        .status {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 5;
+            font-size: 14px;
+            padding: 15px 20px;
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 10px;
+            max-width: 90%;
+            line-height: 1.4;
+        }
+        
+        .mic-button {
+            background: #ff4757 !important;
+        }
+        
+        .mic-button.active {
+            background: #2ed573 !important;
+        }
+        
+        #manualTap {
+            background: #3742fa !important;
+            font-size: 16px;
+            padding: 10px 20px;
+            border-radius: 25px;
+        }
+        
+        #manualTap:hover {
+            background: #5352ed !important;
+        }
+        
+        #manualTap:active {
+            transform: scale(0.95);
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+        
+        .pulse {
+            animation: pulse 0.3s ease-in-out;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="control-panel">
+            <div class="control-group">
+                <label>節拍速度 (BPM)</label>
+                <input type="range" id="bpmSlider" min="60" max="180" value="120">
+                <span class="bpm-display" id="bpmDisplay">120</span>
+            </div>
+
+            <div class="control-group">
+                <label>音色</label>
+                <select id="soundSelect">
+                    <option value="click">點擊聲</option>
+                    <option value="beep">嗶嗶聲</option>
+                    <option value="tick">滴答聲</option>
+                    <option value="wood">木魚聲</option>
+                </select>
+            </div>
+            
+            <button id="soundToggle">🔊 聲音開啟</button>
+            <button id="micToggle" class="mic-button">🎤 開啟麥克風</button>
+            <button id="manualTap" style="display: none;">👆 手動拍擊</button>
+            <button id="startStop">▶️ 開始</button>
+        </div>
+        
+        <div class="track-container">
+            <div class="metronome-track">
+                <div class="track-label">節拍器軌跡</div>
+                <canvas id="metronomeCanvas"></canvas>
+            </div>
+            
+            <div class="user-track">
+                <div class="track-label">使用者拍手軌跡</div>
+                <canvas id="userCanvas"></canvas>
+                <div class="status" id="micStatus">點擊開啟麥克風開始練習</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class BeatVisualizer {
+            constructor() {
+                this.bpm = 120;
+                this.isRunning = false;
+                this.soundEnabled = true;
+                this.micEnabled = false;
+                this.currentSoundType = 'click';
+                this.micStream = null;
+                this.lastClapTime = 0;
+                
+                this.metronomeCanvas = document.getElementById('metronomeCanvas');
+                this.userCanvas = document.getElementById('userCanvas');
+                this.metronomeCtx = this.metronomeCanvas.getContext('2d');
+                this.userCtx = this.userCanvas.getContext('2d');
+                
+                this.audioContext = null;
+                this.microphone = null;
+                this.analyser = null;
+                this.dataArray = null;
+                
+                this.metronomeTrail = [];
+                this.userTrail = [];
+                this.scrollOffset = 0;
+                this.ballY = 0;
+                this.ballDirection = 1;
+                this.lastBeat = 0;
+                
+                this.initializeElements();
+                this.setupCanvas();
+                this.animate();
+            }
+            
+            initializeElements() {
+                this.bpmSlider = document.getElementById('bpmSlider');
+                this.bpmDisplay = document.getElementById('bpmDisplay');
+                this.soundSelect = document.getElementById('soundSelect');
+                this.soundToggle = document.getElementById('soundToggle');
+                this.micToggle = document.getElementById('micToggle');
+                this.manualTap = document.getElementById('manualTap');
+                this.startStop = document.getElementById('startStop');
+                this.micStatus = document.getElementById('micStatus');
+                
+                this.isManualMode = false;
+                
+                this.bpmSlider.addEventListener('input', (e) => {
+                    this.bpm = parseInt(e.target.value);
+                    this.bpmDisplay.textContent = this.bpm;
+                });
+                
+                this.soundSelect.addEventListener('change', (e) => {
+                    this.currentSoundType = e.target.value;
+                });
+                
+                this.soundToggle.addEventListener('click', () => {
+                    this.soundEnabled = !this.soundEnabled;
+                    this.soundToggle.textContent = this.soundEnabled ? '🔊 聲音開啟' : '🔇 聲音關閉';
+                });
+                
+                this.micToggle.addEventListener('click', () => {
+                    this.toggleMicrophone();
+                });
+                
+                this.manualTap.addEventListener('click', () => {
+                    this.manualClap();
+                });
+                
+                // 觸控支援
+                this.manualTap.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    this.manualClap();
+                });
+                
+                this.startStop.addEventListener('click', () => {
+                    this.toggleMetronome();
+                });
+            }
+            
+            setupCanvas() {
+                const resizeCanvas = () => {
+                    [this.metronomeCanvas, this.userCanvas].forEach(canvas => {
+                        canvas.width = canvas.offsetWidth * devicePixelRatio;
+                        canvas.height = canvas.offsetHeight * devicePixelRatio;
+                        canvas.getContext('2d').scale(devicePixelRatio, devicePixelRatio);
+                    });
+                };
+                
+                resizeCanvas();
+                window.addEventListener('resize', resizeCanvas);
+            }
+            
+            playSound() {
+                if (!this.soundEnabled) return;
+                
+                // 創建 AudioContext（如果不存在）
+                if (!this.audioContext) {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                
+                // 確保 AudioContext 已啟動
+                if (this.audioContext.state === 'suspended') {
+                    this.audioContext.resume();
+                }
+                
+                const oscillator = this.audioContext.createOscillator();
+                const gainNode = this.audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(this.audioContext.destination);
+                
+                switch(this.currentSoundType) {
+                    case 'click':
+                        oscillator.frequency.setValueAtTime(1000, this.audioContext.currentTime);
+                        gainNode.gain.setValueAtTime(0.3, this.audioContext.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.1);
+                        oscillator.start(this.audioContext.currentTime);
+                        oscillator.stop(this.audioContext.currentTime + 0.1);
+                        break;
+                    case 'beep':
+                        oscillator.frequency.setValueAtTime(800, this.audioContext.currentTime);
+                        gainNode.gain.setValueAtTime(0.2, this.audioContext.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.2);
+                        oscillator.start(this.audioContext.currentTime);
+                        oscillator.stop(this.audioContext.currentTime + 0.2);
+                        break;
+                    case 'tick':
+                        oscillator.frequency.setValueAtTime(2000, this.audioContext.currentTime);
+                        gainNode.gain.setValueAtTime(0.1, this.audioContext.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.05);
+                        oscillator.start(this.audioContext.currentTime);
+                        oscillator.stop(this.audioContext.currentTime + 0.05);
+                        break;
+                    case 'wood':
+                        oscillator.frequency.setValueAtTime(400, this.audioContext.currentTime);
+                        gainNode.gain.setValueAtTime(0.4, this.audioContext.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.3);
+                        oscillator.start(this.audioContext.currentTime);
+                        oscillator.stop(this.audioContext.currentTime + 0.3);
+                        break;
+                }
+            }
+            
+            async toggleMicrophone() {
+                // 1. 手動模式時 → 改切換回麥克風
+                if (this.isManualMode) {
+                    this.disableManualMode();
+                    return;
+                }
+
+                // 2. 若已開啟 → 關閉
+                if (this.micEnabled) {
+                    if (this.micStream) {
+                        this.micStream.getTracks().forEach(t => t.stop());
+                        this.micStream = null;
+                    }
+                    this.micEnabled = false;
+                    this.micToggle.textContent = '🎤 開啟麥克風';
+                    this.micToggle.classList.remove('active');
+                    this.micStatus.textContent = '點擊開啟麥克風開始練習';
+                    console.log('麥克風已關閉');
+                    return;
+                }
+
+                /* ===== 以下為「嘗試開啟」的流程 ===== */
+                try {
+                    /* (1) 檢查 HTTPS／localhost */
+                    if (!window.isSecureContext) {
+                        alert('瀏覽器安全限制：麥克風僅能在 HTTPS 或 localhost 使用！');
+                        return;
+                    }
+
+                    /* (2) 第一次按下時才建立 AudioContext（確保有 user-gesture） */
+                    if (!this.audioContext) {
+                        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    } else if (this.audioContext.state === 'suspended') {
+                        await this.audioContext.resume();
+                    }
+
+                    this.micStatus.textContent = '正在請求麥克風權限...';
+
+                    /* (3) 取得串流（最通用的 constraints） */
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                    /* (4) 建立 Analyser */
+                    this.microphone = this.audioContext.createMediaStreamSource(stream);
+                    this.analyser = this.audioContext.createAnalyser();
+                    this.analyser.fftSize = 1024;
+                    this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+                    this.microphone.connect(this.analyser);
+
+                    /* (5) UI 更新 */
+                    this.micEnabled = true;
+                    this.micStream = stream;
+                    this.micToggle.textContent = '🎤 關閉麥克風';
+                    this.micToggle.classList.add('active');
+                    this.micStatus.textContent = '麥克風已開啟，請開始拍手！';
+                    console.log('麥克風設定完成');
+
+                } catch (error) {
+                    console.error('麥克風錯誤：', error);
+
+                    /* (6) 根據錯誤類型給使用者提示 */
+                    let msg = '';
+                    switch (error.name) {
+                        case 'NotAllowedError':
+                            msg = '您已拒絕麥克風權限，請到瀏覽器設定/網站設定中手動允許。';
+                            break;
+                        case 'NotFoundError':
+                            msg = '裝置未偵測到麥克風，請確認硬體或權限設定。';
+                            break;
+                        default:
+                            msg = '麥克風無法使用，已切換到手動拍擊模式！';
+                    }
+                    alert(msg);
+                    this.enableManualMode();
+                }
+            }
+            
+            enableManualMode() {
+                this.isManualMode = true;
+                this.micToggle.textContent = '👆 關閉手動模式';
+                this.micToggle.classList.add('active');
+                this.manualTap.style.display = 'block';
+                this.micStatus.innerHTML = `
+                    <div style="color: #2ed573; margin-bottom: 10px;">✅ 手動拍擊模式已啟用</div>
+                    <div style="font-size: 12px;">點擊下方「手動拍擊」按鈕來模擬拍手</div>
+                `;
+            }
+            
+            disableManualMode() {
+                this.isManualMode = false;
+                this.micToggle.textContent = '🎤 開啟麥克風';
+                this.micToggle.classList.remove('active');
+                this.manualTap.style.display = 'none';
+                this.micStatus.textContent = '點擊開啟麥克風開始練習';
+            }
+            
+            manualClap() {
+                if (!this.isManualMode) return;
+                
+                // 手動觸發拍手效果
+                const currentTime = Date.now();
+                this.userTrail.push({
+                    x: this.userCanvas.offsetWidth * 0.8 + this.scrollOffset,
+                    y: this.userCanvas.offsetHeight / 2,
+                    time: currentTime,
+                    intensity: 1
+                });
+                
+                // 視覺反饋
+                this.manualTap.classList.add('pulse');
+                setTimeout(() => {
+                    this.manualTap.classList.remove('pulse');
+                }, 300);
+                
+                console.log('手動拍擊觸發');
+            }
+            
+            toggleMetronome() {
+                this.isRunning = !this.isRunning;
+                this.startStop.textContent = this.isRunning ? '⏹️ 停止' : '▶️ 開始';
+                
+                if (this.isRunning) {
+                    this.lastBeat = Date.now();
+                }
+            }
+            
+            detectClap() {
+                // 如果是手動模式，不需要偵測
+                if (this.isManualMode) return false;
+                
+                if (!this.micEnabled || !this.analyser || !this.dataArray) return false;
+                
+                this.analyser.getByteFrequencyData(this.dataArray);
+                
+                // 計算音量
+                let sum = 0;
+                for (let i = 0; i < this.dataArray.length; i++) {
+                    sum += this.dataArray[i] * this.dataArray[i];
+                }
+                const rms = Math.sqrt(sum / this.dataArray.length);
+                
+                // 動態調整閾值，使其更敏感
+                const threshold = 15;
+                const isClap = rms > threshold;
+                
+                // 防止連續觸發（去抖動）
+                const now = Date.now();
+                if (isClap && (!this.lastClapTime || now - this.lastClapTime > 200)) {
+                    this.lastClapTime = now;
+                    console.log('偵測到拍手！音量:', rms);
+                    return true;
+                }
+                
+                return false;
+            }
+            
+            drawMetronomeTrack() {
+                const canvas = this.metronomeCanvas;
+                const ctx = this.metronomeCtx;
+                const width = canvas.offsetWidth;
+                const height = canvas.offsetHeight;
+                
+                ctx.clearRect(0, 0, width, height);
+                
+                // 繪製背景網格
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                ctx.lineWidth = 1;
+                for (let i = 0; i < width; i += 50) {
+                    ctx.beginPath();
+                    ctx.moveTo(i - this.scrollOffset % 50, 0);
+                    ctx.lineTo(i - this.scrollOffset % 50, height);
+                    ctx.stroke();
+                }
+                
+                // 繪製中線
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, height / 2);
+                ctx.lineTo(width, height / 2);
+                ctx.stroke();
+                
+                // 更新球的位置
+                const beatInterval = 60000 / this.bpm; // 毫秒
+                const currentTime = Date.now();
+                
+                if (this.isRunning) {
+                    const timeSinceBeat = (currentTime - this.lastBeat) % beatInterval;
+                    const progress = timeSinceBeat / beatInterval;
+                    
+                    // 球的彈跳動畫
+                    this.ballY = height / 2 + Math.sin(progress * Math.PI * 2) * (height / 4);
+                    
+                    // 每次節拍播放聲音
+                    if (timeSinceBeat < 50) { // 50ms的誤差範圍
+                        this.playSound();
+                    }
+                }
+                
+                // 繪製球
+                const ballX = width * 0.8;
+                ctx.fillStyle = '#FFD700';
+                ctx.shadowColor = '#FFD700';
+                ctx.shadowBlur = 20;
+                ctx.beginPath();
+                ctx.arc(ballX, this.ballY, 15, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                
+                // 繪製軌跡
+                this.metronomeTrail.push({ x: ballX + this.scrollOffset, y: this.ballY, time: currentTime });
+                this.metronomeTrail = this.metronomeTrail.filter(point => currentTime - point.time < 5000);
+                
+                ctx.strokeStyle = '#FFD700';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                for (let i = 0; i < this.metronomeTrail.length; i++) {
+                    const point = this.metronomeTrail[i];
+                    const age = (currentTime - point.time) / 5000;
+                    const alpha = 1 - age;
+                    const x = point.x - this.scrollOffset;
+                    
+                    if (x > 0 && x < width) {
+                        ctx.globalAlpha = alpha;
+                        if (i === 0) {
+                            ctx.moveTo(x, point.y);
+                        } else {
+                            ctx.lineTo(x, point.y);
+                        }
+                    }
+                }
+                ctx.stroke();
+                ctx.globalAlpha = 1;
+            }
+            
+            drawUserTrack() {
+                const canvas = this.userCanvas;
+                const ctx = this.userCtx;
+                const width = canvas.offsetWidth;
+                const height = canvas.offsetHeight;
+                
+                ctx.clearRect(0, 0, width, height);
+                
+                // 繪製背景網格
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                ctx.lineWidth = 1;
+                for (let i = 0; i < width; i += 50) {
+                    ctx.beginPath();
+                    ctx.moveTo(i - this.scrollOffset % 50, 0);
+                    ctx.lineTo(i - this.scrollOffset % 50, height);
+                    ctx.stroke();
+                }
+                
+                // 繪製中線
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, height / 2);
+                ctx.lineTo(width, height / 2);
+                ctx.stroke();
+                
+                const currentTime = Date.now();
+                
+                // 檢測拍手
+                if (this.detectClap()) {
+                    this.userTrail.push({
+                        x: width * 0.8 + this.scrollOffset,
+                        y: height / 2,
+                        time: currentTime,
+                        intensity: 1
+                    });
+                }
+                
+                // 清除舊的拍手記錄
+                this.userTrail = this.userTrail.filter(clap => currentTime - clap.time < 5000);
+                
+                // 繪製拍手信號
+                this.userTrail.forEach(clap => {
+                    const age = (currentTime - clap.time) / 5000;
+                    const alpha = 1 - age;
+                    const size = 20 * (1 - age * 0.5);
+                    const x = clap.x - this.scrollOffset;
+                    
+                    if (x > -50 && x < width + 50) {
+                        ctx.fillStyle = `rgba(255, 100, 100, ${alpha})`;
+                        ctx.shadowColor = '#ff6464';
+                        ctx.shadowBlur = 15;
+                        ctx.beginPath();
+                        ctx.arc(x, clap.y, size, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.shadowBlur = 0;
+                    }
+                });
+            }
+            
+            animate() {
+                if (this.isRunning) {
+                    this.scrollOffset += 2;
+                }
+                
+                this.drawMetronomeTrack();
+                this.drawUserTrack();
+                
+                requestAnimationFrame(() => this.animate());
+            }
+        }
+        
+        // 初始化應用
+        window.addEventListener('DOMContentLoaded', () => {
+            new BeatVisualizer();
+        });
+    </script>
+</body>
+</html>
