@@ -771,7 +771,10 @@
                     this.ballY = height / 2 + Math.sin(progress * Math.PI * 2) * (height / 4);
                     
                     if (timeSinceBeat < 50) {
-                        this.playSound();
+                        // 只有在非隱藏模式時才播放聲音
+                        if (!this.shouldHideMetronome()) {
+                            this.playSound();
+                        }
                         this.beatCount++;
                     }
                 }
