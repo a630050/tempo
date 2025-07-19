@@ -120,6 +120,12 @@
             border-radius: 10px;
             max-width: 90%;
             line-height: 1.4;
+            transition: opacity 0.5s ease-in-out;
+        }
+        
+        .status.hidden {
+            opacity: 0;
+            pointer-events: none;
         }
         
         .mic-button {
@@ -161,7 +167,7 @@
         <div class="control-panel">
             <div class="control-group">
                 <label>節拍速度 (BPM)</label>
-                <input type="range" id="bpmSlider" min="60" max="180" value="120">
+                <input type="range" id="bpmSlider" min="50" max="180" value="75">
                 <span class="bpm-display" id="bpmDisplay">120</span>
             </div>
 
@@ -205,6 +211,7 @@
                 this.currentSoundType = 'click';
                 this.micStream = null;
                 this.lastClapTime = 0;
+                this.statusHideTimer = null;
                 
                 this.metronomeCanvas = document.getElementById('metronomeCanvas');
                 this.userCanvas = document.getElementById('userCanvas');
@@ -222,6 +229,13 @@
                 this.ballY = 0;
                 this.ballDirection = 1;
                 this.lastBeat = 0;
+                
+                // 聲音偵測相關參數
+                this.soundBuffer = [];
+                this.bufferSize = 5;
+                this.lastSoundLevel = 0;
+                this.peakDetectionThreshold = 30;
+                this.minimumInterval = 300; // 最小間隔時間（毫秒）
                 
                 this.initializeElements();
                 this.setupCanvas();
@@ -337,6 +351,29 @@
                 }
             }
             
+            hideStatusAfterDelay() {
+                // 清除之前的計時器
+                if (this.statusHideTimer) {
+                    clearTimeout(this.statusHideTimer);
+                }
+                
+                // 3秒後隱藏狀態視窗
+                this.statusHideTimer = setTimeout(() => {
+                    this.micStatus.classList.add('hidden');
+                }, 3000);
+            }
+            
+            showStatus(message) {
+                this.micStatus.textContent = message;
+                this.micStatus.classList.remove('hidden');
+                
+                // 清除隱藏計時器
+                if (this.statusHideTimer) {
+                    clearTimeout(this.statusHideTimer);
+                    this.statusHideTimer = null;
+                }
+            }
+            
             async toggleMicrophone() {
                 // 1. 手動模式時 → 改切換回麥克風
                 if (this.isManualMode) {
@@ -353,7 +390,7 @@
                     this.micEnabled = false;
                     this.micToggle.textContent = '🎤 開啟麥克風';
                     this.micToggle.classList.remove('active');
-                    this.micStatus.textContent = '點擊開啟麥克風開始練習';
+                    this.showStatus('點擊開啟麥克風開始練習');
                     console.log('麥克風已關閉');
                     return;
                 }
@@ -373,7 +410,7 @@
                         await this.audioContext.resume();
                     }
 
-                    this.micStatus.textContent = '正在請求麥克風權限...';
+                    this.showStatus('正在請求麥克風權限...');
 
                     /* (3) 取得串流（最通用的 constraints） */
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -390,7 +427,11 @@
                     this.micStream = stream;
                     this.micToggle.textContent = '🎤 關閉麥克風';
                     this.micToggle.classList.add('active');
-                    this.micStatus.textContent = '麥克風已開啟，請開始拍手！';
+                    this.showStatus('麥克風已開啟，請開始拍手！');
+                    
+                    // 3秒後自動隱藏提示
+                    this.hideStatusAfterDelay();
+                    
                     console.log('麥克風設定完成');
 
                 } catch (error) {
@@ -422,6 +463,8 @@
                     <div style="color: #2ed573; margin-bottom: 10px;">✅ 手動拍擊模式已啟用</div>
                     <div style="font-size: 12px;">點擊下方「手動拍擊」按鈕來模擬拍手</div>
                 `;
+                this.micStatus.classList.remove('hidden');
+                this.hideStatusAfterDelay();
             }
             
             disableManualMode() {
@@ -429,7 +472,7 @@
                 this.micToggle.textContent = '🎤 開啟麥克風';
                 this.micToggle.classList.remove('active');
                 this.manualTap.style.display = 'none';
-                this.micStatus.textContent = '點擊開啟麥克風開始練習';
+                this.showStatus('點擊開啟麥克風開始練習');
             }
             
             manualClap() {
@@ -470,25 +513,41 @@
                 
                 this.analyser.getByteFrequencyData(this.dataArray);
                 
-                // 計算音量
+                // 計算音量（RMS）
                 let sum = 0;
                 for (let i = 0; i < this.dataArray.length; i++) {
                     sum += this.dataArray[i] * this.dataArray[i];
                 }
                 const rms = Math.sqrt(sum / this.dataArray.length);
                 
-                // 動態調整閾值，使其更敏感
-                const threshold = 15;
-                const isClap = rms > threshold;
-                
-                // 防止連續觸發（去抖動）
-                const now = Date.now();
-                if (isClap && (!this.lastClapTime || now - this.lastClapTime > 200)) {
-                    this.lastClapTime = now;
-                    console.log('偵測到拍手！音量:', rms);
-                    return true;
+                // 將當前音量加入緩衝區
+                this.soundBuffer.push(rms);
+                if (this.soundBuffer.length > this.bufferSize) {
+                    this.soundBuffer.shift();
                 }
                 
+                // 計算平均音量
+                const avgSound = this.soundBuffer.reduce((a, b) => a + b, 0) / this.soundBuffer.length;
+                
+                // 檢測音量峰值（當前音量明顯高於平均值）
+                const isPeak = rms > this.peakDetectionThreshold && rms > avgSound * 2;
+                
+                // 防止連續觸發（更嚴格的去抖動）
+                const now = Date.now();
+                const timeSinceLastClap = now - this.lastClapTime;
+                
+                if (isPeak && timeSinceLastClap > this.minimumInterval) {
+                    // 確認這是一個真正的峰值（不是噪音）
+                    if (rms > this.lastSoundLevel * 1.5) {
+                        this.lastClapTime = now;
+                        console.log('偵測到拍手！音量:', rms.toFixed(2), '平均:', avgSound.toFixed(2));
+                        this.lastSoundLevel = rms;
+                        return true;
+                    }
+                }
+                
+                // 更新上次音量記錄
+                this.lastSoundLevel = rms;
                 return false;
             }
             
