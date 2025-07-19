@@ -36,6 +36,7 @@
             justify-content: center;
             position: relative;
             z-index: 20;
+            flex-shrink: 0;
         }
         
         .control-group {
@@ -106,6 +107,7 @@
             flex: 1;
             display: flex;
             flex-direction: column;
+            min-height: 0;
         }
         
         .metronome-track, .user-track {
@@ -116,6 +118,36 @@
             margin: 10px;
             border-radius: 10px;
             background: rgba(0, 0, 0, 0.2);
+            min-height: 0;
+        }
+        
+        .metronome-track.hidden-overlay {
+            position: relative;
+        }
+        
+        .metronome-track.hidden-overlay::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 15;
+            pointer-events: none;
+        }
+        
+        .metronome-track.hidden-overlay::after {
+            content: '隱藏中 (4拍)';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff6464;
+            font-size: 18px;
+            font-weight: bold;
+            z-index: 16;
+            pointer-events: none;
         }
         
         .track-label {
@@ -189,13 +221,21 @@
             animation: pulse 0.3s ease-in-out;
         }
         
-        /* 手機橫式 RWD */
+        /* 手機橫式 RWD - 修正版 */
         @media screen and (max-width: 768px) and (orientation: landscape) {
+            body {
+                height: 100vh;
+            }
+            
+            .container {
+                height: 100vh;
+            }
+            
             .control-panel {
-                padding: 8px;
-                gap: 8px;
-                min-height: 60px;
-                flex-wrap: wrap;
+                padding: 5px 8px;
+                gap: 6px;
+                min-height: 50px;
+                flex-shrink: 0;
             }
             
             .control-group {
@@ -203,60 +243,70 @@
             }
             
             .control-group label {
-                font-size: 12px;
+                font-size: 10px;
             }
             
             input[type="range"] {
-                width: 80px;
+                width: 60px;
+                height: 20px;
             }
             
             select, button {
-                padding: 6px 12px;
-                font-size: 12px;
+                padding: 4px 8px;
+                font-size: 10px;
             }
             
             .bpm-display {
-                font-size: 14px;
+                font-size: 12px;
             }
             
             .checkbox-group {
-                padding: 6px 10px;
+                padding: 4px 8px;
             }
             
             .checkbox-group label {
-                font-size: 12px;
+                font-size: 10px;
             }
             
             .checkbox-group input[type="checkbox"] {
-                width: 14px;
-                height: 14px;
+                width: 12px;
+                height: 12px;
             }
             
             .track-container {
-                margin-top: 5px;
+                flex: 1;
+                margin: 0;
+                min-height: 0;
+                height: calc(100vh - 60px);
             }
             
             .metronome-track, .user-track {
-                margin: 5px;
+                margin: 3px;
                 border-width: 1px;
+                min-height: calc((100vh - 60px - 12px) / 2);
+                height: calc((100vh - 60px - 12px) / 2);
             }
             
             .track-label {
-                top: 5px;
-                left: 10px;
-                padding: 3px 8px;
-                font-size: 12px;
+                top: 3px;
+                left: 8px;
+                padding: 2px 6px;
+                font-size: 10px;
             }
             
             .status {
-                font-size: 12px;
-                padding: 10px 15px;
+                font-size: 10px;
+                padding: 8px 12px;
                 max-width: 95%;
             }
             
             #manualTap {
+                font-size: 10px;
+                padding: 4px 8px;
+            }
+            
+            .metronome-track.hidden-overlay::after {
                 font-size: 14px;
-                padding: 8px 16px;
             }
         }
         
@@ -317,7 +367,7 @@
         </div>
         
         <div class="track-container">
-            <div class="metronome-track">
+            <div class="metronome-track" id="metronomeTrack">
                 <div class="track-label">節拍器軌跡</div>
                 <canvas id="metronomeCanvas"></canvas>
             </div>
@@ -333,7 +383,7 @@
     <script>
         class BeatVisualizer {
             constructor() {
-                this.bpm = 75; // 預設改為75
+                this.bpm = 75;
                 this.isRunning = false;
                 this.soundEnabled = true;
                 this.micEnabled = false;
@@ -341,14 +391,15 @@
                 this.micStream = null;
                 this.lastClapTime = 0;
                 this.statusHideTimer = null;
-                this.hideMode = false; // 隱藏模式
-                this.beatCount = 0; // 節拍計數器
-                this.startTime = 0; // 開始時間
+                this.hideMode = false;
+                this.beatCount = 0;
+                this.startTime = 0;
                 
                 this.metronomeCanvas = document.getElementById('metronomeCanvas');
                 this.userCanvas = document.getElementById('userCanvas');
                 this.metronomeCtx = this.metronomeCanvas.getContext('2d');
                 this.userCtx = this.userCanvas.getContext('2d');
+                this.metronomeTrack = document.getElementById('metronomeTrack');
                 
                 this.audioContext = null;
                 this.microphone = null;
@@ -367,7 +418,7 @@
                 this.bufferSize = 5;
                 this.lastSoundLevel = 0;
                 this.peakDetectionThreshold = 30;
-                this.minimumInterval = 300; // 最小間隔時間（毫秒）
+                this.minimumInterval = 300;
                 
                 this.initializeElements();
                 this.setupCanvas();
@@ -442,12 +493,10 @@
             playSound() {
                 if (!this.soundEnabled) return;
                 
-                // 創建 AudioContext（如果不存在）
                 if (!this.audioContext) {
                     this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 }
                 
-                // 確保 AudioContext 已啟動
                 if (this.audioContext.state === 'suspended') {
                     this.audioContext.resume();
                 }
@@ -491,12 +540,10 @@
             }
             
             hideStatusAfterDelay() {
-                // 清除之前的計時器
                 if (this.statusHideTimer) {
                     clearTimeout(this.statusHideTimer);
                 }
                 
-                // 3秒後隱藏狀態視窗
                 this.statusHideTimer = setTimeout(() => {
                     this.micStatus.classList.add('hidden');
                 }, 3000);
@@ -506,7 +553,6 @@
                 this.micStatus.textContent = message;
                 this.micStatus.classList.remove('hidden');
                 
-                // 清除隱藏計時器
                 if (this.statusHideTimer) {
                     clearTimeout(this.statusHideTimer);
                     this.statusHideTimer = null;
@@ -514,13 +560,11 @@
             }
             
             async toggleMicrophone() {
-                // 1. 手動模式時 → 改切換回麥克風
                 if (this.isManualMode) {
                     this.disableManualMode();
                     return;
                 }
 
-                // 2. 若已開啟 → 關閉
                 if (this.micEnabled) {
                     if (this.micStream) {
                         this.micStream.getTracks().forEach(t => t.stop());
@@ -534,15 +578,12 @@
                     return;
                 }
 
-                /* ===== 以下為「嘗試開啟」的流程 ===== */
                 try {
-                    /* (1) 檢查 HTTPS／localhost */
                     if (!window.isSecureContext) {
                         alert('瀏覽器安全限制：麥克風僅能在 HTTPS 或 localhost 使用！');
                         return;
                     }
 
-                    /* (2) 第一次按下時才建立 AudioContext（確保有 user-gesture） */
                     if (!this.audioContext) {
                         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
                     } else if (this.audioContext.state === 'suspended') {
@@ -551,24 +592,20 @@
 
                     this.showStatus('正在請求麥克風權限...');
 
-                    /* (3) 取得串流（最通用的 constraints） */
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-                    /* (4) 建立 Analyser */
                     this.microphone = this.audioContext.createMediaStreamSource(stream);
                     this.analyser = this.audioContext.createAnalyser();
                     this.analyser.fftSize = 1024;
                     this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
                     this.microphone.connect(this.analyser);
 
-                    /* (5) UI 更新 */
                     this.micEnabled = true;
                     this.micStream = stream;
                     this.micToggle.textContent = '🎤 關閉麥克風';
                     this.micToggle.classList.add('active');
                     this.showStatus('麥克風已開啟，請開始拍手！');
                     
-                    // 3秒後自動隱藏提示
                     this.hideStatusAfterDelay();
                     
                     console.log('麥克風設定完成');
@@ -576,7 +613,6 @@
                 } catch (error) {
                     console.error('麥克風錯誤：', error);
 
-                    /* (6) 根據錯誤類型給使用者提示 */
                     let msg = '';
                     switch (error.name) {
                         case 'NotAllowedError':
@@ -617,7 +653,6 @@
             manualClap() {
                 if (!this.isManualMode) return;
                 
-                // 手動觸發拍手效果
                 const currentTime = Date.now();
                 this.userTrail.push({
                     x: this.userCanvas.offsetWidth * 0.8 + this.scrollOffset,
@@ -626,7 +661,6 @@
                     intensity: 1
                 });
                 
-                // 視覺反饋
                 this.manualTap.classList.add('pulse');
                 setTimeout(() => {
                     this.manualTap.classList.remove('pulse');
@@ -645,42 +679,37 @@
                     this.beatCount = 0;
                 } else {
                     this.beatCount = 0;
+                    // 停止時移除隱藏覆蓋
+                    this.metronomeTrack.classList.remove('hidden-overlay');
                 }
             }
             
             detectClap() {
-                // 如果是手動模式，不需要偵測
                 if (this.isManualMode) return false;
                 
                 if (!this.micEnabled || !this.analyser || !this.dataArray) return false;
                 
                 this.analyser.getByteFrequencyData(this.dataArray);
                 
-                // 計算音量（RMS）
                 let sum = 0;
                 for (let i = 0; i < this.dataArray.length; i++) {
                     sum += this.dataArray[i] * this.dataArray[i];
                 }
                 const rms = Math.sqrt(sum / this.dataArray.length);
                 
-                // 將當前音量加入緩衝區
                 this.soundBuffer.push(rms);
                 if (this.soundBuffer.length > this.bufferSize) {
                     this.soundBuffer.shift();
                 }
                 
-                // 計算平均音量
                 const avgSound = this.soundBuffer.reduce((a, b) => a + b, 0) / this.soundBuffer.length;
                 
-                // 檢測音量峰值（當前音量明顯高於平均值）
                 const isPeak = rms > this.peakDetectionThreshold && rms > avgSound * 2;
                 
-                // 防止連續觸發（更嚴格的去抖動）
                 const now = Date.now();
                 const timeSinceLastClap = now - this.lastClapTime;
                 
                 if (isPeak && timeSinceLastClap > this.minimumInterval) {
-                    // 確認這是一個真正的峰值（不是噪音）
                     if (rms > this.lastSoundLevel * 1.5) {
                         this.lastClapTime = now;
                         console.log('偵測到拍手！音量:', rms.toFixed(2), '平均:', avgSound.toFixed(2));
@@ -689,7 +718,6 @@
                     }
                 }
                 
-                // 更新上次音量記錄
                 this.lastSoundLevel = rms;
                 return false;
             }
@@ -700,12 +728,11 @@
                 
                 const currentTime = Date.now();
                 const elapsedTime = currentTime - this.startTime;
-                const beatInterval = 60000 / this.bpm; // 每拍的毫秒數
+                const beatInterval = 60000 / this.bpm;
                 const currentBeat = Math.floor(elapsedTime / beatInterval);
                 
-                // 每8拍為一個循環，前4拍顯示，後4拍隱藏
                 const cyclePosition = currentBeat % 8;
-                return cyclePosition >= 4; // 第4-7拍時隱藏（0-based）
+                return cyclePosition >= 4;
             }
             
             drawMetronomeTrack() {
@@ -734,93 +761,76 @@
                 ctx.lineTo(width, height / 2);
                 ctx.stroke();
                 
-                // 更新球的位置
-                const beatInterval = 60000 / this.bpm; // 毫秒
+                const beatInterval = 60000 / this.bpm;
                 const currentTime = Date.now();
                 
                 if (this.isRunning) {
                     const timeSinceBeat = (currentTime - this.lastBeat) % beatInterval;
                     const progress = timeSinceBeat / beatInterval;
                     
-                    // 球的彈跳動畫
                     this.ballY = height / 2 + Math.sin(progress * Math.PI * 2) * (height / 4);
                     
-                    // 每次節拍播放聲音和更新計數
-                    if (timeSinceBeat < 50) { // 50ms的誤差範圍
+                    if (timeSinceBeat < 50) {
                         this.playSound();
                         this.beatCount++;
                     }
                 }
                 
-                // 檢查是否應該隱藏節拍器
+                // 檢查是否應該隱藏節拍器並更新CSS類
                 const shouldHide = this.shouldHideMetronome();
-                
-                if (!shouldHide) {
-                    // 繪製球
-                    const ballX = width * 0.8;
-                    ctx.fillStyle = '#FFD700';
-                    ctx.shadowColor = '#FFD700';
-                    ctx.shadowBlur = 20;
-                    ctx.beginPath();
-                    ctx.arc(ballX, this.ballY, 15, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.shadowBlur = 0;
-                    
-                    // 繪製軌跡
-                    this.metronomeTrail.push({ x: ballX + this.scrollOffset, y: this.ballY, time: currentTime });
+                if (shouldHide) {
+                    this.metronomeTrack.classList.add('hidden-overlay');
                 } else {
-                    // 隱藏模式時，仍然要添加軌跡點以保持連續性，但設為透明
-                    const ballX = width * 0.8;
-                    this.metronomeTrail.push({ x: ballX + this.scrollOffset, y: this.ballY, time: currentTime, hidden: true });
+                    this.metronomeTrack.classList.remove('hidden-overlay');
                 }
                 
-                // 清除舊的軌跡點
-                this.metronomeTrail = this.metronomeTrail.filter(point => currentTime - point.time < 5000);
+                // 始終繪製球和軌跡（即使在隱藏模式下）
+                const ballX = width * 0.8;
+                ctx.fillStyle = '#FFD700';
+                ctx.shadowColor = '#FFD700';
+                ctx.shadowBlur = 20;
+                ctx.beginPath();
+                ctx.arc(ballX, this.ballY, 15, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
                 
-                // 繪製軌跡（只繪製非隱藏的部分）
-                if (!shouldHide) {
-                    ctx.strokeStyle = '#FFD700';
-                    ctx.lineWidth = 3;
-                    ctx.beginPath();
-                    for (let i = 0; i < this.metronomeTrail.length; i++) {
-                        const point = this.metronomeTrail[i];
-                        if (point.hidden) continue; // 跳過隱藏的點
+                // 始終添加軌跡點
+                this.metronomeTrail.push({ x: ballX + this.scrollOffset, y: this.ballY, time: currentTime });
+                
+                // 修改軌跡清除邏輯：根據滾動位置清除，而不是時間
+                const trailLength = width * 2; // 軌跡長度為畫面寬度的2倍
+                this.metronomeTrail = this.metronomeTrail.filter(point => 
+                    (this.scrollOffset - point.x) < trailLength
+                );
+                
+                // 繪製軌跡
+                ctx.strokeStyle = '#FFD700';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                let hasMoveTo = false;
+                
+                for (let i = 0; i < this.metronomeTrail.length; i++) {
+                    const point = this.metronomeTrail[i];
+                    const x = point.x - this.scrollOffset;
+                    
+                    if (x > -50 && x < width + 50) {
+                        // 計算透明度（基於距離而不是時間）
+                        const distance = this.scrollOffset - point.x;
+                        const maxDistance = trailLength;
+                        const alpha = Math.max(0, 1 - (distance / maxDistance));
                         
-                        const age = (currentTime - point.time) / 5000;
-                        const alpha = 1 - age;
-                        const x = point.x - this.scrollOffset;
+                        ctx.globalAlpha = alpha;
                         
-                        if (x > 0 && x < width) {
-                            ctx.globalAlpha = alpha;
-                            if (i === 0) {
-                                ctx.moveTo(x, point.y);
-                            } else {
-                                ctx.lineTo(x, point.y);
-                            }
+                        if (!hasMoveTo) {
+                            ctx.moveTo(x, point.y);
+                            hasMoveTo = true;
+                        } else {
+                            ctx.lineTo(x, point.y);
                         }
                     }
-                    ctx.stroke();
-                    ctx.globalAlpha = 1;
                 }
-                
-                // 如果是隱藏模式，在畫面上顯示提示
-                if (this.hideMode && this.isRunning) {
-                    const currentTime = Date.now();
-                    const elapsedTime = currentTime - this.startTime;
-                    const beatInterval = 60000 / this.bpm;
-                    const currentBeat = Math.floor(elapsedTime / beatInterval);
-                    const cyclePosition = currentBeat % 8;
-                    
-                    ctx.fillStyle = shouldHide ? 'rgba(255, 100, 100, 0.8)' : 'rgba(100, 255, 100, 0.8)';
-                    ctx.font = '16px Arial';
-                    ctx.textAlign = 'right';
-                    ctx.fillText(
-                        shouldHide ? '隱藏中 (4拍)' : '顯示中 (4拍)', 
-                        width - 20, 
-                        30
-                    );
-                    ctx.textAlign = 'left';
-                }
+                ctx.stroke();
+                ctx.globalAlpha = 1;
             }
             
             drawUserTrack() {
@@ -861,22 +871,28 @@
                     });
                 }
                 
-                // 清除舊的拍手記錄
-                this.userTrail = this.userTrail.filter(clap => currentTime - clap.time < 5000);
+                // 修改軌跡清除邏輯：根據滾動位置清除，而不是時間
+                const trailLength = width * 2; // 軌跡長度為畫面寬度的2倍
+                this.userTrail = this.userTrail.filter(clap => 
+                    (this.scrollOffset - clap.x) < trailLength
+                );
                 
-                // 繪製拍手信號（使用者軌跡始終顯示）
+                // 繪製拍手信號
                 this.userTrail.forEach(clap => {
-                    const age = (currentTime - clap.time) / 5000;
-                    const alpha = 1 - age;
-                    const size = 20 * (1 - age * 0.5);
                     const x = clap.x - this.scrollOffset;
                     
                     if (x > -50 && x < width + 50) {
+                        // 計算透明度和大小（基於距離而不是時間）
+                        const distance = this.scrollOffset - clap.x;
+                        const maxDistance = trailLength;
+                        const alpha = Math.max(0, 1 - (distance / maxDistance));
+                        const size = 20 * (1 - (distance / maxDistance) * 0.5);
+                        
                         ctx.fillStyle = `rgba(255, 100, 100, ${alpha})`;
                         ctx.shadowColor = '#ff6464';
                         ctx.shadowBlur = 15;
                         ctx.beginPath();
-                        ctx.arc(x, clap.y, size, 0, Math.PI * 2);
+                        ctx.arc(x, clap.y, Math.max(5, size), 0, Math.PI * 2);
                         ctx.fill();
                         ctx.shadowBlur = 0;
                     }
